@@ -1,5 +1,3 @@
-Exploring Within-Colony Thermal Tolerance Variability in Reef-Building Corals
-
 Title: Exploring Within-Colony Thermal Tolerance Variability in Reef-Building Corals
 Authors: Marlen Schlotheuber, Sebastian Szereday, Lisa Schaefer, Hannah Manns, Christian R. Voolstra
 Link to open access paper:
