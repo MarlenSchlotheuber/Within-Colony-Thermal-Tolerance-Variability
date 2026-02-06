@@ -12,7 +12,7 @@
 
 3. The CBASS HOBO folder contains the raw temperature data of the four CBASS tanks of each CBASS experiments conducted in Indonesia and Malaysia. Here two folders can be found: one containing the HOBO data of the one CBASS experiment from Indonesia and the HOBO data of the 6 CBASS experiments from Malaysia. 
 
-4. the R-script that was used to analysis data and create figures for the manuscript.
+4. the R-script that was used to analysis data and create figures for the manuscript. (Note for Marlen: I will update the up-to-date version when everything is set)
 
 5. ITS2 and 16S files can be found at NCBI: under....,
 ##### Note
