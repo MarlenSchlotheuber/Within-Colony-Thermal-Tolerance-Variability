@@ -9,9 +9,9 @@
 ##### Note:
 - In the manuscript colony 5 from Indonesia was removed due to sequencing errors. Therefore, colony 6 and 7 correspond to colony 5 and 6 in the manuscript.
 
-3. The CBASS HOBO folder contains the raw temperature data of the four CBASS tanks of each CBASS experiments conducted in Indonesia and Malaysia. Here two folders can be found: one containing the HOBO data of the one CBASS experiment from Indonesia and the HOBO data of the 6 CBASS experiments from Malaysia. 
+3. The CBASS HOBO folder contains the raw temperature data of the four CBASS tanks of each CBASS experiments conducted in Indonesia and Malaysia. Here two folders can be found: one containing the HOBO data of the one CBASS (7 colonies) experiment from Indonesia and the HOBO data of the 6 CBASS experiments (each with one colony) from Malaysia. 
 
-4. the R-script that was used to analysis data and create figures for the manuscript. (Note for Marlen: I will update the up-to-date version when everything is set)
+4. the R-script contains the script that was used to analyse the data and to create figures for the manuscript. Figures were finalized using Affinity Designer.
 
 5. ITS2 and 16S files can be found at NCBI: under....,
 ##### Note
