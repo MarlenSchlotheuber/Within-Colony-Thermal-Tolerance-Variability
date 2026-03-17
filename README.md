@@ -1,7 +1,7 @@
 # Exploring Within-Colony Thermal Tolerance Variability in Reef-Building Corals
 ## Marlen Schlotheuber, Sebastian Szereday, Lisa Schaefer, Hannah Manns, Christian R. Voolstra
 
-#### Here the R-script for data analysis and creation of the figures of the manuscript "Exploring Within-Colony Thermal Tolernace Variability in Reef Building Corals" as well as the temperature profile data of the CBASS assay can be found.
+#### Here the R-script of the manuscript "Exploring Within-Colony Thermal Tolerance Variability in Reef Building Corals" as well as the temperature profile data of the CBASS assay can be found.
 
 1. The CBASS HOBO folder contains the raw temperature data of the four CBASS tanks of each CBASS experiments conducted in Indonesia and Malaysia. Here two folders can be found: one containing the HOBO data of one CBASS (7 colonies) experiment from Indonesia and the HOBO data of the 6 CBASS experiments (each with one colony) from Malaysia. 
 
