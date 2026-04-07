@@ -1,0 +1,2259 @@
+---
+title: "Exploring Within-Colony Thermal Tolerance Variability in Reef Building Corals"
+author: "Marlen Schlotheuber"
+format: html
+editor: visual
+---
+
+# R code for Manuscript: Exploring Within-Colony Thermal Tolerance Variability in Ree-Building Corals
+
+### Install needed packages: CBASS package
+
+```{r}
+# load packages
+library(tidyverse)
+library(seqinr)
+library(phyloseq)
+library(Biostrings)
+library(reshape2)
+library(scales)
+library(gridExtra)
+library(dada2)
+library(Rcpp)
+library(sf)
+library(rnaturalearth)
+library(ggmap)
+library(readxl)
+library(rstudioapi)
+library(RColorBrewer)
+library(CBASSED50)
+library(patchwork)
+library(car)
+library(mgcv)
+library(stringr)
+library(lme4)
+library(lmerTest) 
+library(emmeans)
+library(patchwork)
+```
+
+## **Fig.1 Study regions and the sampling locations within massive Porites colonies**
+
+```{r}
+# Study 
+# Get country boundaries
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Subset for Indonesia and Malaysia
+countries <- world[world$name %in% c("Indonesia", "Malaysia"), ]
+
+# plot
+Fig1A_map <-  ggplot() +
+  geom_sf(data = world, fill = "white", color = "black") +
+  geom_sf(data = subset(countries, name == "Indonesia"), fill = "white", color = "black") +
+  geom_sf(data = subset(countries, name == "Malaysia"), fill = "white", color = "black") +
+  ggtitle("Sampling sites: Indonesia and Malaysia") +
+  coord_sf(xlim = c(90, 155), ylim = c(-35, 35), expand = FALSE) +
+  scale_x_continuous(name = "Longitude (°E)", breaks = seq(90, 155, 10)) +
+  scale_y_continuous(name = "Latitude (°N)", breaks = seq(-35, 35, 10)) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "grey90", color = NA),  # ocean
+    plot.background  = element_rect(fill = "white", color = NA),   # outer plot bg
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+Fig1A_map
+```
+
+# Thermal tolerance data from Indonesia and Malaysia
+
+To examine the photosynthetic efficiency data from Malaysia and Indonesia, the R-package from Iakovleva, Colin & Voolstra, 2025 was used ([https://doi.org/10.5281/zenodo.8370644](https://doi.org/10.5281/zenodo.8370644.)).
+
+The photosynthetic efficiency data from the four temperature profiles of each sampling location from Indonesia and Malysia was used to fit log-logistic dose-response curves, using the ‘drc’ R package. These curves were used to determine the effective dose 50 (ED50) for each sampling location (Evensen et al. 2021; Voolstra et al. 2021). The ED50 value defines the temperature at which photosynthetic efficiency has declined by 50% relative to the baseline measurement, and is therefore used as an empirically derived proxy for heat stress tolerance (Evensen et al. 2022). 
+
+### Load Data ED50 data
+
+```{r}
+# Indonesia
+# Upload Indonesia data: 20240827_ID_GA_Por_CBASS_PAM_data_T420
+input_data_path <- selectFile(
+  caption = "Select XLSX or CSV Input File")
+
+# ID
+cbass_dataset_ID <- read_data(input_data_path)
+
+# To specify the prefix for output files
+output_prefix <- tools::file_path_sans_ext(input_data_path)
+
+rlog::log_info(paste("Your current directory is", getwd()))
+rlog::log_info(paste("Your input filename is", basename(input_data_path)))
+rlog::log_info(paste("The output files will be written into", output_prefix))
+
+# Malaysia data
+# upload Malaysia data: 20240418_MY_PLT_Por_CBASS_PAM_data_T420
+input_data_path <- selectFile(
+  caption = "Select XLSX or CSV Input File")
+
+# MYS
+cbass_dataset_MY <- read_data(input_data_path)
+
+# To specify the prefix for output files
+output_prefix <- tools::file_path_sans_ext(input_data_path)
+
+rlog::log_info(paste("Your current directory is", getwd()))
+rlog::log_info(paste("Your input filename is", basename(input_data_path)))
+rlog::log_info(paste("The output files will be written into", output_prefix))
+
+```
+
+### Analysis and Preprocessing
+
+```{r}
+# ID
+cbass_dataset_ID <- preprocess_dataset(cbass_dataset_ID)
+validate_cbass_dataset(cbass_dataset_ID)
+
+# MY
+cbass_dataset_MY <- preprocess_dataset(cbass_dataset_MY)
+validate_cbass_dataset(cbass_dataset_MY)
+```
+
+### Explore ED50
+
+```{r}
+# ID
+# grouping properties Indonesia
+grouping_properties <- c("Condition")
+
+# PAM data Indonesia
+drm_formula <- "Pam_value ~ Temperature"
+models <- fit_drms(cbass_dataset_ID, grouping_properties, drm_formula, is_curveid = TRUE)
+str(cbass_dataset_ID)
+
+# PAM data 
+ed50_ID <- get_ed50_by_grouping_property(models)
+cbass_dataset_ID <- define_grouping_property(cbass_dataset_ID, grouping_properties) %>%
+  mutate(GroupingProperty = paste(GroupingProperty, Genotype, sep = "_"))
+
+ed50_df_ID <- 
+  left_join(ed50_ID, cbass_dataset_ID, by = "GroupingProperty") %>%
+  dplyr::select(Country, Site, Condition, Species, Genotype, Depth,  all_of(grouping_properties), names(ed50_MY)) %>%
+  distinct()
+
+
+# MY
+# grouping properties
+grouping_properties <- c("Condition")
+
+# PAM data Malaysia
+drm_formula <- "Pam_value ~ Temperature"
+models <- fit_drms(cbass_dataset_MY, grouping_properties, drm_formula, is_curveid = TRUE)
+
+# PAM data
+ed50_MY <- get_ed50_by_grouping_property(models)
+cbass_dataset_MY <- define_grouping_property(cbass_dataset_MY, grouping_properties) %>%
+  mutate(GroupingProperty = paste(GroupingProperty, Genotype, sep = "_"))
+
+ed50_df_MY <- 
+  left_join(ed50_MY, cbass_dataset_MY, by = "GroupingProperty") %>%
+  dplyr::select(Country, Site, Condition, Orientation, Location, Species, Genotype, Depth,  all_of(grouping_properties), names(ed50_MY)) %>%
+  distinct()
+```
+
+### Temperature response curve
+
+```{r}
+# ID
+# remove not needed columns
+cbass_dataset_ID_filtered <- cbass_dataset_ID %>%
+  select(-Date, -Project, -Longitude, -Latitude)
+
+
+# set order of the Locations
+cbass_dataset_ID_filtered$Condition <- factor(cbass_dataset_ID_filtered$Condition, 
+                                   levels = c("Top", "Bottom"))
+
+# visualize temperature response curve 
+exploratory_curve_ID <-
+  ggplot(data = cbass_dataset_ID_filtered,
+       aes(
+         x = Temperature,
+         y = Pam_value,
+         # You can play around with the group value (e.g., Species, Site, Condition)
+         group = GroupingProperty,
+         color = Condition)) +
+  geom_smooth(
+    method = drc::drm,
+    method.args = list(
+      fct = drc::LL.3()),
+    se = FALSE,
+    size = 0.7
+  ) +
+  geom_point(size = 1.5) +
+  facet_wrap( ~ Genotype, nrow = 2) +
+  scale_color_brewer(palette = "Paired") # Colorblind-friendly palette
+
+#plot
+exploratory_curve_ID
+
+
+# MYS
+# set order of the Locations
+# remove not needed columns
+cbass_dataset_MY_filtered <- cbass_dataset_MY %>%
+  select(-Date, -Project, -Longitude, -Latitude)
+
+
+cbass_dataset_MY_filtered$Location <- factor(cbass_dataset_MY_filtered$Location, 
+                                   levels = c("Top", "Upper Middle", "Lower Middle", "Bottom"))
+
+# order genotypes
+cbass_dataset_MY_filtered$Genotype <- factor(cbass_dataset_MY_filtered$Genotype, 
+                                   levels = c("1", "6", "2", "3", "5", "4"))
+
+
+# visualize temperature response curve
+exploratory_curve_MY <-
+  ggplot(data = cbass_dataset_MY_filtered,
+       aes(
+         x = Temperature,
+         y = Pam_value,
+         # You can play around with the group value (e.g., Species, Site, Condition)
+         group = GroupingProperty,
+         color = Location)) +
+  geom_smooth(
+    method = drc::drm,
+    method.args = list(
+      fct = drc::LL.3()),
+    se = FALSE,
+    size = 0.7
+  ) +
+  geom_point(size = 1.5) +
+  facet_wrap( ~ Genotype, nrow = 2) +
+  scale_color_brewer(palette = "Paired") # Colorblind-friendly palette
+
+# plot
+exploratory_curve_MY
+```
+
+## **Fig 2. Thermal tolerance across the surface of massive Porites sp. colonies from Indonesia and Malaysia.**
+
+```{r}
+# Indonesia
+# only select needed columns from the indonesia dataset
+ed50_df_ID_filtered <- ed50_df_ID %>%
+  dplyr::select(c("ED50", "Depth", "Condition", "Genotype"))
+
+# convert Genotype to numeric
+ed50_df_ID_filtered$Genotype <- as.numeric(as.character(ed50_df_ID_filtered$Genotype))
+
+# calculate mean ED50 per colony/genotype and calculate differences
+ED50_ID_means <- ed50_df_ID_filtered %>%
+  group_by(Genotype) %>%
+  summarise(mean_ED50 = mean(ED50))
+
+# create final dataframe with mean ED50
+Final_ED50_ID <- ed50_df_ID_filtered %>%
+  left_join(ED50_ID_means, by = c("Genotype")) %>%
+  mutate(ED50_diff = ED50 - mean_ED50) %>%
+  select(-contains(".x")) %>% # remove duplicates
+  distinct()  # Re
+
+# prepare for plotting
+# set the order of the locations
+Final_ED50_ID$Condition <- factor(Final_ED50_ID$Condition, 
+                                   levels = c("Bottom", "Top"))
+
+# set the order of the coral colonies: organiye by decreasing depth
+Final_ED50_ID <- Final_ED50_ID %>%
+  mutate(
+    Genotype = factor(Genotype, levels = c("1", "2", "3", "7", "4", "6"))  # Order genotypes
+  )
+
+# set the colors               
+genotype_colors <- c("1" = "skyblue3", 
+                     "2" = "lightblue", 
+                     "3" = "dodgerblue4", 
+                     "7" = "cornflowerblue", 
+                     "4" = "dodgerblue3", 
+                     "6" = "lightskyblue")
+
+
+# ED50 Difference Bar Plot
+ED50_diff_barplot_ID <- ggplot(Final_ED50_ID, aes(x = ED50_diff, y = Condition, fill = Genotype)) +
+  geom_vline(aes(xintercept = 0), color = "black", linetype = "dashed", size = 1) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~Genotype, ncol = 1) +
+  xlim(-1, 1) +
+  scale_y_discrete(labels = c("Bottom", "Top")) +
+  scale_fill_manual(values = genotype_colors) +
+  labs(
+    x = "Deviation from Mean ED50 [°C]", 
+    y = "Location within Colony",
+    fill = "Genotype"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    text = element_text(size = 13),
+    strip.text = element_blank(),
+    axis.title = element_text(size = 13, face = "bold"),
+    axis.text = element_text(size = 13),
+    legend.position = "none",
+    panel.spacing = unit(0.3, "lines"),
+    strip.background = element_blank() )+
+      # Add mean ED50 above each facet
+  geom_text(
+    data = ED50_ID_means,
+    aes(
+      x = 0,              
+      y = 2.5,              
+      label = paste0("Mean ED50: ", round(mean_ED50, 2))
+    ),
+    inherit.aes = FALSE,
+    size = 3,
+    fontface = "bold" )
+
+
+ED50_diff_barplot_ID
+
+
+# Malayisa
+# only select needed columns from the indonesia dataset
+ed50_df_MY_filtered <- ed50_df_MY %>%
+  dplyr::select(c("ED50", "Depth", "Orientation", "Condition", "Genotype", "Location"))
+
+# calculate mean ED50 per colony/genotype and calculate differences
+ED50_MY_means <- ed50_df_MY_filtered %>%
+  group_by(Genotype) %>%
+  summarise(mean_ED50 = round(mean(ED50), 2))
+
+# create final dataframe with mean ED50
+Final_ED50_MY <- ed50_df_MY_filtered %>%
+  left_join(ED50_MY_means, by = c("Genotype")) %>%
+  mutate(ED50_diff = ED50 - mean_ED50, 2) %>%
+  select(-contains(".x")) %>% # remove duplicates
+  distinct()
+
+# set order of the Locations
+Final_ED50_MY$Location <- factor(Final_ED50_MY$Location, 
+                                   levels = c("Bottom", "Lower Middle", "Upper Middle", "Top"))
+ 
+# set order of the colonies with decreasing depth
+Final_ED50_MY <- Final_ED50_MY %>%
+  mutate(
+    Genotype = factor(Genotype, levels = c("1", "6", "2", "3", "5", "4")))
+
+# adjust Orientation column
+Final_ED50_MY <- Final_ED50_MY %>%
+  mutate(
+    Orientation = factor(Orientation, levels = c("West", "East")))
+
+
+# set the colors    
+genotype_colors <- c("1" = "pink4", 
+                     "2" = "orchid4", 
+                     "3" = "pink2", 
+                     "4" = "mistyrose2", 
+                     "5" = "lightcoral",
+                     "6" = "hotpink4")
+
+
+# Bar plot
+ED50_diff_barplot_MY <- ggplot(Final_ED50_MY, aes(x = ED50_diff, y = Location, fill = Genotype)) +
+  geom_vline(aes(xintercept = 0), color = "black", linetype = "dashed", size = 1) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_grid(Genotype ~ Orientation, scales = "free_y") +
+  xlim(-1, 1) +
+  scale_y_discrete(labels = c("Bottom", "Lower Middle", "Upper Middle", "Top")) +
+  scale_fill_manual(values = genotype_colors) +
+  labs(
+    x = "Deviation from Mean ED50 [°C]", 
+    y = "Location within Colony",
+    fill = "Genotype"
+  ) +
+  theme_minimal(base_size = 13) +  # Global text size
+  theme(
+    text = element_text(size = 13),
+    strip.text = element_blank(),
+    axis.title = element_text(size = 13, face = "bold"),  
+    axis.text = element_text(size = 13),  
+    legend.position = "none",
+    panel.spacing = unit(0.4, "lines"),
+    strip.background = element_blank() )+
+  geom_text(
+    data = ED50_MY_means,
+    aes(
+      x = 0,              
+      y = 4.2,              
+      label = paste0("Mean ED50: ", round(mean_ED50, 2))
+    ),
+    inherit.aes = FALSE,
+    size = 3,
+    fontface = "bold" )
+
+
+# plot Malaysia
+ED50_diff_barplot_MY
+
+# Final Figure. 2: both plots
+ED50_plot <- ED50_diff_barplot_ID + ED50_diff_barplot_MY
+ED50_plot
+```
+
+# ITS2 type profiles - Symbiodiniaceae community composition
+
+ITS2 sequencing data from colonies collected in Indonesia and Malaysia were seperatly analysed using SymPortal (Hume et al., 2019).\
+ITS2 type profiles being representative of putative Symbiodiniaceae genotypes were characterized by specific sets of defining intragenomic ITS2 sequence variants (DIVs) (Hume et al. 2019) and visualized using R studio.
+
+### Indonesia: Load Data and Preprocessing
+
+```{r}
+# ITS2 type profile metadata
+input_data_path <- selectFile(
+  caption = "Select XLSX or CSV Input File")
+
+# ITS2 profile data
+its2_metadata_ID <- read_data(input_data_path)
+
+
+#upload ITS2 profile absolute abundance
+its2_profile_ID <- read.table('/yourpathname/582_20250509T135802_DBV_20250510T135051.profiles.relative.abund_and_meta.txt', header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+# remove not needed rows and columns
+# Set row 6 as column names
+colnames(its2_profile_ID) <- its2_profile_ID[6, ]
+
+# Remove rows 1–5, 19, and 20
+its2_profile_ID <- its2_profile_ID[-c(1:6, 19, 20), ]
+
+# Remove first column
+its2_profile_ID <- its2_profile_ID[,-1]
+
+# Rename new first column
+colnames(its2_profile_ID)[1] <- "sample_name"
+
+
+# merge dataframes
+its2_data_ID <- merge(its2_metadata_ID, its2_profile_ID, by = "sample_name", all.x = TRUE)
+
+# prepare for plotting
+# Convert to long format for ggplot
+its2_profile_ID_long <- its2_data_ID %>%
+  gather(key = "ITS2_profile", value = "value", "C15-C15aae":"C15-C15ad-C15ai-C116-C116aa")
+
+# Ensure order
+its2_profile_ID_long <- its2_profile_ID_long %>%
+  mutate(
+    collection_depthrange = factor(collection_depthrange, levels = c("bottom", "top")))
+
+# set order of the colonies with decreasing depth
+its2_profile_ID_long <- its2_profile_ID_long %>%
+  mutate(
+    collection_colony = factor(collection_colony, levels = c("1", "2", "3", "7", "4", "6")))
+
+# check data structure
+str(its2_profile_ID_long)
+# value is character, convert to numeric
+its2_profile_ID_long$value <- as.numeric(its2_profile_ID_long$value)
+```
+
+### Indonesia: Plot ITS2 Type profiles
+
+```{r}
+#plot
+ITS2_plot_ID <- ggplot(its2_profile_ID_long, aes(x = value, y = collection_depthrange, fill = ITS2_profile)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_x_continuous(labels = scales::percent_format(), expand = c(0, 0)) +
+  facet_grid(collection_colony ~ ., scales = "free_y") +
+  theme_minimal(base_size = 13) +
+    guides(fill = guide_legend(ncol = 1)) +
+  labs(
+    x = "Relative Abundance [%]",
+    y = "Location within Colony",
+    fill = "ITS2 Type Profiles"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "C15-C15aae" = '#006633',
+      "C15-C15bn-C15by" = "#99CC33",
+      "C15/C116aa-C15ad" = "#339900",
+      "C57d/C57a" = "#000099",
+      "C15-C15kl-C15he" = "#009966",
+      "C15-C15ad-C15ai-C116-C116aa" = "#6699CC"
+    )) +
+  theme(
+    legend.position = "bottom",
+    legend.box = "horizontal",
+    legend.text = element_text(size = 13),
+    legend.title = element_text(size = 13),
+    axis.text = element_text(size = 13),
+    axis.title = element_text(size = 13),
+    strip.text = element_text(size = 13),
+    panel.grid = element_blank(),
+    panel.border = element_blank()
+  )
+
+ITS2_plot_ID
+```
+
+### Malaysia: Load Data and Preprocessing
+
+```{r}
+# upload ITS2 type profile meta data
+input_data_path <- selectFile(
+  caption = "Select XLSX or CSV Input File")
+
+its2_metadata_MY <- read_data(input_data_path)
+
+#upload ITS2 profile absolute abundance
+its2_profile_MY <- read.table('/yourpathname/560_20250219T125105_DBV_20250221T224139.profiles.relative.abund_and_meta.txt', header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+# remove not needed rows and columns
+# Set row 6 as column names
+colnames(its2_profile_MY) <- its2_profile_MY[6, ]
+
+# Remove rows 1–5, 19, and 20
+its2_profile_MY <- its2_profile_MY[-c(1:6, 59, 60), ]
+
+# Remove first column
+its2_profile_MY <- its2_profile_MY[,-1]
+
+# Rename new first column
+colnames(its2_profile_MY)[1] <- "sample_name"
+
+# remove additional sampling locations of colony2 that are not needed
+its2_profile_MY <- its2_profile_MY[
+  !its2_profile_MY$sample_name %in% c("Por2_E5", "Por2_E6", "Por2_W5", "Por2_W6"),
+]
+
+# merge dataframes
+its2_data_MY <- merge(its2_metadata_MY, its2_profile_MY, by = "sample_name", all.x = TRUE)
+
+# prepare for plotting
+# Convert to long format for ggplot
+its2_data_MY_long <- its2_data_MY %>%
+  gather(key = "ITS2_profile", value = "value", "C15-C15ev-C15dt-C15kl-C15pm":"C15-C15by-C15ai")
+
+# change the naming in collection_depthrange
+its2_data_MY_long <- its2_data_MY_long %>%
+  mutate(collection_depthrange = dplyr::recode(collection_depthrange,
+                                      lower_middle = "Lower Middle",
+                                      upper_middle = "Upper Middle",
+                                      top = "Top",
+                                      bottom = "Bottom"))
+
+# Ensure 'collection_depthrange' is ordered and 'collection_orientation' is a factor with "West" and "East"
+its2_data_MY_long <- its2_data_MY_long %>%
+  mutate(
+    collection_depthrange = factor(collection_depthrange, levels = c("Bottom", "Lower Middle","Upper Middle", "Top")),
+    collection_orientation = factor(collection_orientation, levels = c("West", "East"))
+  )
+
+# organize data
+# set order of the colonies with decreasing depth
+its2_data_MY_long <- its2_data_MY_long %>%
+  mutate(
+    collection_colony = factor(collection_colony, levels = c("1", "6", "2", "3", "5", "4")))
+
+str(its2_data_MY_long)
+
+#change value to numeric
+its2_data_MY_long$value <- as.numeric(its2_data_MY_long$value)
+```
+
+### Plot ITS2 Type Profile
+
+```{r}
+#plot
+ITS2_plot_MY <- ggplot(its2_data_MY_long, aes(x = value, y = collection_depthrange, fill = ITS2_profile)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_x_continuous(labels = scales::percent_format(), expand = c(0, 0)) +
+  facet_grid(collection_colony ~ collection_orientation, scales = "free_y") +
+  theme_minimal(base_size = 13) +
+  guides(fill = guide_legend(ncol = 1)) +
+  labs(
+    x = "Relative Abundance [%]",
+    y = "Location within Colony",
+    fill = "ITS2 Type Profiles"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "C15-C15ev-C15dt-C15kl-C15pm" = "#66CC66",
+         "C15-C15ad-C15ai-C116-C116aa" = "#6699CC",
+      "C15-C15ev-C15by" = "#66CC99",
+      "C15-C15ev-C15dt" = "#009999",
+      "C15-C15ev" = "#99CCCC",
+        "C15-C15by-C15ai" = "#006666"
+    )) +
+  theme(
+    legend.position = "bottom",
+    legend.box = "horizontal",
+    legend.text = element_text(size = 13),
+    legend.title = element_text(size = 13),
+    axis.text = element_text(size = 13),
+    axis.title = element_text(size = 13),
+    strip.text = element_text(size = 13),
+    panel.grid = element_blank(),
+    panel.border = element_blank()
+  )
+
+ITS2_plot_MY
+
+```
+
+## **Fig. 3 ITS2 type profiles across the surface of massive Porites sp. colonies from Indonesia and Malaysia.**
+
+```{r}
+# Combine plots side-by-side with equal width
+ITS2_final_combined_plot <- ITS2_plot_ID + ITS2_plot_MY +
+  plot_layout(ncol = 2, widths = c(1, 1)) +  # Equal widths for both plots
+  plot_annotation(
+    theme = theme(
+      plot.margin = margin(10, 10, 10, 10)
+    )
+  )
+
+ITS2_final_combined_plot
+```
+
+# 16S - bacterial community composition
+
+16S sequencing data was processed in R studio using the DADA2 pipeline. DADA2 (Callahan et al., 2016) filtered and trimmed reads, calculated error rates, inferred sequence variants, merged paired reads, and removed chimeras. Taxonomy was assigned by using the Silva v138 dataset from the Silva reference database (Benjamin, 2024). The top 20 bacterial families across the colony surface were visualised using R studio. <https://benjjneb.github.io/dada2/tutorial.html>
+
+## Indonesia: DADA2
+
+```{r}
+cat("Reading files") # prints a message to indicate the script is starting to read files
+path <- "." # current working directory
+list.files(path) # lists all files in the current directory 
+
+# Forward and reverse fastq filenames have format: 
+fnFs <- sort(list.files(path, pattern="_R1_001.fastq", full.names = TRUE))
+fnRs <- sort(list.files(path, pattern="_R2_001.fastq", full.names = TRUE))
+# searches for files matching specific patterns _R1_001...and sorts files, get a sorted list of file paths for forward (fnFs) and reverse reads (fnRs)
+
+# Extract sample names, assuming filenames have format
+sample.names <- sapply(strsplit(basename(fnFs), "__|_0"), function(x) x[2])
+
+cat("Processing",length(sample.names),"samples:", sample.names)
+# outputs a summary of the number of samples detected and their names, legth(): counts the number, cat():prints the message
+
+#Inspect read quality profiles
+plotQualityProfile(fnFs[1:2])
+# forwards reads
+# --> Truncate the forward reads at position 280
+
+plotQualityProfile(fnRs[1:2])
+# reversed reads
+# --> Truncate the forward reads at position 200 where the quality crashes
+```
+
+### Filtering and Trimming
+
+This pipeline ensures that only high-quality reads are retained for downstream analysis, which is crucial for the accuracy of biological insights derived from sequencing data.
+
+```{r}
+# filter and trimm 
+cat("Filtering and trimming")
+
+# prints a message to indicate that the filtering and triming steps are about to begin in the sequencing data processing pipeline
+
+# Place filtered files in filtered/ subdirectory
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+names(filtFs) <- sample.names
+names(filtRs) <- sample.names
+
+### set parameters  maxN=0 (DADA2 requires no Ns), truncQ=2, rm.phix=TRUE and maxEE=2. The maxEE parameter sets the maximum number of “expected errors” allowed in a read, which is a better filter than simply averaging quality scores.
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(280,200),maxN=0, maxEE=c(2,2), truncQ=5, rm.phix=TRUE, compress=TRUE, multithread=TRUE) 
+
+head(out)
+```
+
+### Learn error rates & sample interference
+
+```{r}
+# learn error rates
+# The error model is learned using the filtered and trimmed sequences, which helps in determining the probability of errors at each base position across the reads.Forward (errF) and reverse (errR) errors are learned separately because the forward and reverse reads often have different error profiles.
+
+cat("Learning error rates")
+errF <- learnErrors(filtFs, multithread=TRUE)
+errR <- learnErrors(filtRs, multithread=TRUE)
+
+# visualize the esstimated error rates as a sanity check
+plotErrors(errF, nominalQ = T)
+```
+
+### Sample Inference
+
+```{r}
+# This step is essential for transforming the raw sequencing data into biologically meaningful information by correcting errors and identifying the true sequences present in your samples
+# apply the core sample inference algorithm to the filtered and trimmed sequence data.
+dadaFs <- dada(filtFs, err=errF, multithread=TRUE, pool = T)
+dadaRs <- dada(filtRs, err=errR, multithread=TRUE, pool = T)
+# It uses the error rates learned from the reverse reads (errR) to apply the error-correction model and infer the true biological sequences.
+
+#Inspecting the returned dada-class object:
+dadaFs[[1]]
+dadaRs[[1]]
+```
+
+### Merging paired reads and checking on read length
+
+```{r}
+mergers_ID <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
+# merges forward (F) and reveres (R) sequences and filtered data in one column
+# Inspect the merger data.frame from the first sample
+head(mergers_ID[[1]])
+
+# We can now construct an amplicon sequence variant table (ASV) table, a higher-resolution version of the OTU table produced by traditional methods.
+
+seqtab_ID <- makeSequenceTable(mergers_ID)
+# creates a sequence table from the merged paired-end reads. A sequence table is a matrix where: rows represent individual samples, columns represent unique DNA sequences, entries contain the counts of each sequence in each sample
+dim(seqtab_ID)
+# returns the dimensions of the sequence table (1st value number of rows (sample), 2nd value is the number of columns (unique sequences))
+
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab_ID)))
+
+# check visually how the districution of read length is
+# Get the read length distribution
+length_table_ID <- table(nchar(getSequences(seqtab_ID)))
+
+# Convert to data frame for plotting
+length_df_ID <- as.data.frame(length_table_ID)
+colnames(length_df_ID) <- c("Length", "Count")
+
+# Make sure Length is numeric
+length_df_ID$Length <- as.numeric(as.character(length_df_ID$Length))
+
+ggplot(length_df_ID, aes(x = Length, y = Count)) +
+  geom_col(fill = "steelblue") +  # vertical bars
+  labs(title = "Distribution of Read Lengths",
+       x = "Read Length (bp)",
+       y = "Number of Reads") +
+    xlim(280, 400)+
+  theme_minimal()
+```
+
+### Remove Chimeras
+
+```{r}
+# Remove chimeras  
+# Chimeric sequences are artifacts of the PCR amplification process. These sequences do not represent real biological sequences but rather result from errors in the molecular processes used to prepare and sequence DNA.
+# Chimeric sequences can inflate diversity estimates. Removing them ensures that the analysis focuses only on true biological sequences.
+# This code removes chimeric sequences from the sequence table, calculates the dimensions of the updated sequence table and determines the proportion of non-chimeric sequences retained.
+
+seqtab.nochim_ID <- removeBimeraDenovo(seqtab_ID, method="consensus", multithread=TRUE, verbose=TRUE)
+
+dim(seqtab.nochim_ID)
+
+## calculate the  frequency of chimeric sequences 
+sum(seqtab.nochim_ID)/sum(seqtab_ID)
+
+# Track reads through the pipeline 
+# This block of code tracks the number of reads at each stage of the DADA2 pipeline for each sample. This tracking helps monitor data loss, identify problematic samples, and ensure the pipeline is functioning as expected.
+getN <- function(x) sum(getUniques(x))
+
+# custom function that calculates the total number of unique reads (amplicon sequences)
+track_ID <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers_ID, getN), rowSums(seqtab.nochim_ID))
+# combines data from multiple steps into a single table
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track_ID) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track_ID) <- sample.names
+head(track_ID)
+
+# download table
+# before downloading remove the tail of the name
+track_ID_adjusted <- track_ID
+
+rownames(track_ID_adjusted) <- rownames(track_ID_adjusted) |>
+  sub("_S.*", "", x = _) |>
+  sub("^GAD_", "", x = _)
+
+write.xlsx(track_ID_adjusted, file = "202404_ID_PLT_stats_mothur_overview_table.xlsx", rowNames = TRUE)
+```
+
+### Assign Taxonomy
+
+```{r}
+# Assign taxonomy
+# This block of code assigns taxonomic classifications to the non-chimeric sequences (ASVs) in your dataset, enabling the identification of the taxa represented by the sequences
+
+taxa_ID <- assignTaxonomy(seqtab.nochim_ID,"/yourpathname/silva_nr_v138_train_set.fa.gz" , multithread=TRUE)
+# uses a reference database to classify each unique sequence (ASV) in the seqtab.nochim table to a taxonomic level
+# rows: correspond to unique sequences (ASV)
+
+##optional: make species level assignments based on exact matching
+taxa_ID <- addSpecies(taxa_ID, '/yourpathname/silva_species_assignment_v138.fa.gz')
+                   
+#inspect the taxonomic assignments:
+taxa.print_ID <- taxa_ID # Removing sequence rownames for display only
+rownames(taxa.print_ID) <- NULL
+head(taxa.print_ID)
+```
+
+### Prepare Data for plotting
+
+plots the 20 most abundant bacterial families
+
+```{r}
+# add needed info to data frame
+samples.out_ID <- rownames(seqtab.nochim_ID)
+info_split_ID <- strsplit(samples.out_ID, "_")
+Coral_Species <- sapply(info_split_ID, function(x) sub("[0-9]+", "", x[2]))
+Genotype <- sapply(info_split_ID, function(x) gsub("[^0-9]", "", x[2]))
+Location <- sapply(info_split_ID, function(x) x[3])
+samdf_ID <- data.frame(Coral_Species, Genotype, Location, stringsAsFactors = FALSE)
+rownames(samdf_ID) <- samples.out_ID
+
+# adjust Location 
+samdf_ID <- samdf_ID %>%
+  mutate(Location = recode(Location,
+                           "top" = "Top",
+                           "bottom" = "Bottom"))
+
+# save metadata
+samdf_ID_download <- samdf_ID
+
+# remove tail from sample name
+rownames(samdf_ID_download) <- rownames(samdf_ID_download) |>
+  sub("_S.*", "", x = _) |>
+  sub("^GAD_", "", x = _)
+
+
+write.xlsx(samdf_ID_download, file = "202404_ID_GAD_metadata.xlsx", rowNames = TRUE)
+
+
+# Prepare data - FILTERING - seqtab.nochim
+# turn matrix
+seqtab.nochim_t_ID <- t(seqtab.nochim_ID)
+
+# Filter: Keep only rows with sum > 10
+row_sums_ID <- rowSums(seqtab.nochim_t_ID)
+
+seqtab.nochim_t_ID_filtered <- 
+  seqtab.nochim_t_ID[row_sums_ID > 10, ]
+
+# before filtering
+nrow(seqtab.nochim_t_ID)
+# 678
+
+# after filtering
+nrow(seqtab.nochim_t_ID_filtered)
+#  535
+
+# turn matrix back so it was as before
+seqtab.nochim_ID_filtered <- t(seqtab.nochim_t_ID_filtered)
+# filtered seqtab table
+
+# FILTER: taxa table
+# filter taxa table based on the rows from the seqtab.nochim table
+filtered_asvs_ID <- rownames(seqtab.nochim_t_ID_filtered)
+
+# subset the taxonomy table to keep only these ASVs
+taxa_ID_filtered <- taxa_ID[filtered_asvs_ID, ]
+
+# filter contaminations every kingdom that is not eukaryotes
+# first check how many rows are not bacteria
+taxa_df_ID <- as.data.frame(taxa_ID_filtered)
+
+nrow(taxa_df_ID)
+
+# now filter: oly keep rows where Kingdom is "Bacteria"
+taxa_ID_filtered_onlybac <- taxa_df_ID[!is.na(taxa_df_ID$Kingdom) & taxa_df_ID$Kingdom == "Bacteria", ]
+
+# Check
+dim(taxa_ID_filtered_onlybac)
+
+# make the data frame back into a matrix
+# Convert to matrix
+taxa_ID_filtered_onlybac <- as.matrix(taxa_ID_filtered_onlybac)
+
+# now remove the rows that were removed from the taxa table also from the asv table before constructing physeq dataframe
+# what rows should be kept
+keep_ASVs_ID <- rownames(taxa_ID_filtered_onlybac)
+
+# Assuming your ASV table is named asv_table_MY_filtered
+seqtab.nochim_t_ID_filtered_onlybac <- seqtab.nochim_t_ID_filtered[keep_ASVs_ID, , drop = FALSE]
+
+# how many rows before filtering
+nrow(seqtab.nochim_t_ID_filtered)
+
+# how many rows after filtering
+nrow(seqtab.nochim_t_ID_filtered_onlybac)
+
+# turn matrix
+seqtab.nochim_ID_filtered_onlybac <- t(seqtab.nochim_t_ID_filtered_onlybac)
+
+# CONSTRUCT PHYLSEQ
+# construct a phyloseq object. with filtered seqtab.nochim and taxa data and ASV names
+ps_ID_filtered <- phyloseq(otu_table(seqtab.nochim_ID_filtered_onlybac, taxa_are_rows=FALSE), 
+               sample_data(samdf_ID), 
+               tax_table(taxa_ID_filtered_onlybac))
+
+# its easier to work with the short ASV names than with the full DNA sequence
+# store DNA sequences of our ASV in the refseq slot of the phyloseq object
+dna_ID <- Biostrings::DNAStringSet(taxa_names(ps_ID_filtered))
+names(dna_ID) <- taxa_names(ps_ID_filtered)
+ps_ID_filtered <- merge_phyloseq(ps_ID_filtered, dna_ID)
+taxa_names(ps_ID_filtered) <- paste0("ASV", seq(ntaxa(ps_ID_filtered)))
+ps_ID_filtered
+
+
+# FOR DOWNLOADING
+# asv table
+asv_df_ID <- as.data.frame(otu_table(ps_ID_filtered))
+
+# turn matrix
+asv_df_ID <- t(asv_df_ID)
+
+# remove not needed sample name tail
+asv_df_ID_download <- asv_df_ID
+
+# remove tail from sample name
+colnames(asv_df_ID_download) <- colnames(asv_df_ID_download) |>
+  sub("_S.*", "", x = _) |>
+  sub("^GAD_", "", x = _)
+
+nrow(asv_df_ID_download)
+
+# download taxa table with DNA sequences and with ASV names
+write.xlsx(asv_df_ID_download, file = "202404_ID_GAD_asv_table_filtered_onlybac.xlsx", rowNames = TRUE)
+
+# extract taxa table with ASV
+taxa_df_ID <- as.data.frame(tax_table(ps_ID_filtered))
+nrow(taxa_df_ID)
+
+# download taxa table with DNA sequences and with ASV names
+write.xlsx(taxa_df_ID, file = "202404_ID_GAD_taxa_table_asv_filtered_onlybac.xlsx", rowNames = TRUE)
+
+
+# DNA seq table
+# use: seqtab.nochim_t_filtered
+# rename sample name: only the important info
+seqtab.nochim_t_ID_filtered_onlybac_download <- seqtab.nochim_t_ID_filtered_onlybac
+
+nrow(seqtab.nochim_t_ID_filtered_onlybac_download)
+
+# remove tail from sample name
+colnames(seqtab.nochim_t_ID_filtered_onlybac_download) <- colnames(seqtab.nochim_t_ID_filtered_onlybac_download) |>
+  sub("_S.*", "", x = _) |>
+  sub("^GAD_", "", x = _)
+
+# download ASV table with DNA sequences (filtered: >10 count removed and the sampling locations in colony 2)
+write.xlsx(seqtab.nochim_t_ID_filtered_onlybac_download, file = "202404_ID_GAD_DNA_seq_filtered_onlybac_table.xlsx", rowNames = TRUE)
+
+# create fasta file
+# extract DNA sequences from phyloseq object
+asv_seqs_ID <- refseq(ps_ID_filtered)
+
+# check number of sequences
+length(asv_seqs_ID)   # should be 532
+
+# write to FASTA file
+Biostrings::writeXStringSet(asv_seqs_ID, "202404_ID_GAD_ASV_DNAseq_filtered_onlybac.fasta")
+```
+
+### Barplot: Bacterial Family top 20
+
+```{r}
+# prepare data for plotting
+# Groups ASVs by Family level, Counts are summed up for each Family
+ps_ID_family <- tax_glom(ps_ID_filtered, taxrank = "Family")
+
+# what are the most abundant families in %
+ps_ID_family_rel <- transform_sample_counts(ps_ID_family, function(x) x / sum(x) * 100)
+
+# calculate mean abundance per family across all samples
+family_abundance_stats_ID <- psmelt(ps_ID_family_rel) %>%
+  group_by(Family) %>%
+  summarise(
+    Mean_Abundance = round(mean(Abundance), 3),
+    Variance = round(var(Abundance), 3),
+    SD = round(sd(Abundance), 3),
+    N = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(Mean_Abundance))
+
+# view most abundant families
+head(family_abundance_stats_ID, 10)
+
+# download table
+write.xlsx(family_abundance_stats_ID, 
+           file = "202404_ID_GAD_family_mean_abundance.xlsx", 
+           rowNames = FALSE)
+
+# make dataframe
+df_ps_ID_family <- psmelt(ps_ID_family)
+
+# clean sample column name
+df_ps_ID_family$Sample <- df_ps_ID_family$Sample |>
+  sub("_S.*", "", x = _) |>
+  sub("^GAD_", "", x = _)
+
+
+# rename families that are NA as unknown
+df_ps_ID_family <- df_ps_ID_family %>%
+  mutate(Family = ifelse(is.na(Family), "Unknown", Family))
+
+# 3. Normalize abundance to relative abundance per sample
+df_ps_ID_family <- df_ps_ID_family %>%
+  group_by(Sample) %>%
+  mutate(RelAbundance = Abundance / sum(Abundance)) %>%
+  ungroup()
+
+# download taxa table with DNA sequences and with ASV names
+write.xlsx(df_ps_ID_family, file = "202404_ID_GAD_df_ps_ID_family.xlsx", rowNames = TRUE)
+
+
+# total number of reads
+sum(df_ps_ID_family$Abundance)
+
+# how many unique Families do we have?
+num_unique_families <- length(unique(df_ps_ID_family$Family))
+num_unique_families
+# 29 unique families
+
+# top 20
+top20_families <- df_ps_ID_family %>%
+  group_by(Family) %>%
+  summarise(TotalRelAbundance = sum(RelAbundance), .groups = "drop") %>%
+  arrange(desc(TotalRelAbundance)) %>%
+  slice_head(n = 20) %>%
+  pull(Family)
+
+# Group all non-top 20 families as "Other"
+df_ps_ID_top20_family <- df_ps_ID_family %>%
+  mutate(Family = ifelse(Family %in% top20_families, as.character(Family), "Other"))
+
+# check number of top 20 families
+df_ps_ID_top20_family %>% distinct(Family) %>% count()
+# 21 (including others)
+
+unique(df_ps_ID_top20_family$Family)
+
+# PLOT
+# organize Genotype with increasing depth
+df_ps_ID_top20_family <- df_ps_ID_top20_family %>%
+  mutate(
+    Genotype = factor(Genotype, levels = c("01", "02", "03", "07", "04", "06")))
+
+# Location
+df_ps_ID_top20_family <- df_ps_ID_top20_family %>%
+  mutate(
+    Location = factor(Location, levels = c("Bottom", "Top")))
+
+# when plotting ID and MY together use these colors
+# for ID and MY plotted together
+# combine ID and MYS
+families_combined <- c(
+  # Overlapping families
+  "Halomonadaceae",
+  "Marinobacteraceae",
+  "Chlorobiaceae",
+  "Idiomarinaceae",
+  "Alcanivoracaceae1",
+  "Alteromonadaceae",
+  "Rhodobacteraceae",
+  "Vibrionaceae",
+  "Flavobacteriaceae",
+  
+  # Families only in MY
+  "Endozoicomonadaceae",
+  "Moraxellaceae",
+  "Spirochaetaceae",
+  "Marinilabiliaceae",
+  "Hungateiclostridiaceae",
+  "Propionibacteriaceae",
+  "Desulfosarcinaceae",
+  "Desulfobacteraceae",
+  "Cyclobacteriaceae",
+  "Pseudomonadaceae",
+  "Clade_I",
+  
+  # Families only in ID
+  "Colwelliaceae",
+  "Marinomonadaceae",
+  "Peptostreptococcales-Tissierellales_fa",
+  "Marinifilaceae",
+  "Pseudoalteromonadaceae",
+  "Stappiaceae",
+  "Nitrincolaceae",
+  "Cryomorphaceae",
+  "Arcobacteraceae",
+  "Kordiimonadaceae",
+  "Sphingomonadaceae"
+)
+
+
+colors_combined <- c(
+  # Overlapping families — use MY colors
+  "Halomonadaceae" = "#00538A",
+  "Marinobacteraceae" = "#990000",
+  "Chlorobiaceae" = "#FF6800",
+  "Idiomarinaceae" = "#FFB300",
+  "Alcanivoracaceae1" = "#007D35",
+  "Alteromonadaceae" = "#803E75",
+  "Rhodobacteraceae" = "#A6BDD7",
+  "Vibrionaceae" = "#CC6699",
+  "Flavobacteriaceae" = "#93AA00",
+  
+  # Only in MY
+  "Endozoicomonadaceae" = "#53377A",
+  "Moraxellaceae" = "#FF0000",
+  "Spirochaetaceae" = "#FFEA00",
+  "Marinilabiliaceae" = "#CC9999",
+  "Hungateiclostridiaceae" = "#99FFFF",
+  "Propionibacteriaceae" = "#3399CC",
+  "Desulfosarcinaceae" = "#003300",
+  "Desulfobacteraceae" = "#593318",
+  "Cyclobacteriaceae" = "#66CC66",
+  "Pseudomonadaceae" = "#CC3333",
+  "Clade_I" = "#CC99FF",
+  
+  # Only in ID — pick from ID colors if available, else reuse MY
+  "Colwelliaceae" = "#006666",   # example ID color
+  "Marinomonadaceae" = "#00CC99",
+  "Peptostreptococcales-Tissierellales_fa" = "#CCCC66",
+  "Marinifilaceae" = "#996633",
+  "Pseudoalteromonadaceae" = "#FF6699",
+  "Stappiaceae" = "#99CC99",
+  "Nitrincolaceae" = "#9999FF",
+  "Cryomorphaceae" = "#FF99CC",
+  "Arcobacteraceae" = "#0099FF",
+  "Kordiimonadaceae" = "#CC00FF",
+  "Sphingomonadaceae" = "#0033FF")
+
+
+
+# map colors to families
+family_colors_combined <- setNames(colors_combined, families_combined)
+
+# add color for "Other"
+family_colors_combined["Other"] <- "grey70"
+
+# sort families alphabetically but keep Other first
+family_colors_sorted_combined <- c("Other", sort(setdiff(names(family_colors_combined), "Other")))
+
+# reorder color vector
+family_colors_combined <- family_colors_combined[family_colors_sorted_combined]
+
+# set Family as factor with Other first
+df_ps_ID_top20_family$Family <- factor(
+  df_ps_ID_top20_family$Family,
+  levels = names(family_colors_combined)  # Other first, top families after
+)
+
+
+# plot
+bacteria_family_plot_ID <- ggplot(df_ps_ID_top20_family, aes(x = RelAbundance, y = Location, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_x_continuous(
+    limits = c(0, 1),                    # ensures 0–100% scale
+    labels = scales::percent_format(),   # show as 0%, 10%, … 100%
+    expand = c(0, 0)                     # remove extra padding
+  ) +
+  facet_wrap(~Genotype, ncol = 1) +
+  scale_fill_manual(values = family_colors_combined) +
+  theme_minimal(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold", size = 13),
+    legend.position = "bottom",
+    legend.text = element_text(size = 13),
+    legend.title = element_text(size = 13),
+    axis.text = element_text(size = 13),
+    axis.title = element_text(size = 13),
+    panel.grid = element_blank(),
+    panel.border = element_blank()
+  ) +
+  guides(fill = guide_legend(ncol = 3)) +
+  labs(
+    x = "Relative Abundance [%]",
+    y = "Sampling Location",
+    fill = "Bacterial Family"
+  )
+
+bacteria_family_plot_ID
+```
+
+## Malayisa: DADA2
+
+Data processing with [DADA2](https://github.com/benjjneb/dada2) to infer ASVs
+
+```{r}
+# read file
+cat("Reading files") # prints a message to indicate the script is starting to read files
+path <- "." # current working directory
+list.files(path) # lists all files in the current directory 
+
+# the files Por2_E5 and E6 and W5 and W6 were removed before the analysis to ensure a standaridzed sampling acorss colony surface and across colonies
+
+# Forward and reverse fastq filenames have format: 
+fnFs <- sort(list.files(path, pattern="_R1_001.fastq", full.names = TRUE))
+fnRs <- sort(list.files(path, pattern="_R2_001.fastq", full.names = TRUE))
+# searches for files matching specific patterns _R1_001...and sorts files, get a sorted list of file paths for forward (fnFs) and reverse reads (fnRs)
+
+# Extract sample names, assuming filenames have format
+sample.names <- sapply(strsplit(basename(fnFs), "__|_0"), function(x) x[2])
+
+cat("Processing",length(sample.names),"samples:", sample.names)
+# outputs a summary of the number of samples detected and their names, legth(): counts the number, cat():prints the message
+
+#Inspect read quality profiles
+plotQualityProfile(fnFs[1:2])
+# generates a quality profile plot for the first two forward read files in the fnFs list, DADA2 package in R for processing high-throughput sequence data, to visualize the quality score of sequencing reads across all base positions in a FASTQ file
+# selected the first two 1:2 forward read files in fnFs 
+
+# gray-scale: heat map of the frequency of each quality score at each base position
+# green line: mean quality score at each position
+# orange line: quartiles of the quality score distribution
+# red line: scaled proportion of reads that extend to at least that position
+
+# forwards reads
+# --> Truncate the forward reads at position 280
+
+plotQualityProfile(fnRs[1:2])
+
+# reversed reads
+# worse quality, especially at the end which is common in Illumina sequencing
+# DADA2 incorporates quality information into its error model which makes the algorithm robust to lower quality sequence
+
+# reversed reads
+# --> Truncate the forward reads at position 200
+
+```
+
+### Filtering and Trimming
+
+This pipeline ensures that only high-quality reads are retained for downstream analysis, which is crucial for the accuracy of biological insights derived from sequencing data.
+
+```{r}
+# filter and trimm 
+cat("Filtering and trimming")
+
+# prints a message to indicate that the filtering and triming steps are about to begin in the sequencing data processing pipeline
+
+# Place filtered files in filtered/ subdirectory
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+names(filtFs) <- sample.names
+names(filtRs) <- sample.names
+
+### set parameters  maxN=0 (DADA2 requires no Ns), truncQ=2, rm.phix=TRUE and maxEE=2. The maxEE parameter sets the maximum number of “expected errors” allowed in a read, which is a better filter than simply averaging quality scores.
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(280,200),maxN=0, maxEE=c(2,2), truncQ=5, rm.phix=TRUE, compress=TRUE, multithread=TRUE) 
+head(out)
+
+```
+
+### Learn error rates & sample interference
+
+```{r}
+# learn error rates
+# The error model is learned using the filtered and trimmed sequences, which helps in determining the probability of errors at each base position across the reads.Forward (errF) and reverse (errR) errors are learned separately because the forward and reverse reads often have different error profiles.
+
+cat("Learning error rates")
+errF <- learnErrors(filtFs, multithread=TRUE)
+errR <- learnErrors(filtRs, multithread=TRUE)
+# This function in DADA2 is used to learn the error rates for sequencing reads.
+# multithread=TRUE: Enables multi-threading to speed up the error rate learning process if the system supports it.
+
+# visualize the esstimated error rates as a sanity check
+plotErrors(errF, nominalQ = T)
+# everything looks resonable (black line follows the points, the model fits) and we proceed with confidence
+```
+
+### Sample Inference
+
+```{r}
+# This step is essential for transforming the raw sequencing data into biologically meaningful information by correcting errors and identifying the true sequences present in your samples
+# apply the core sample inference algorithm to the filtered and trimmed sequence data.
+dadaFs <- dada(filtFs, err=errF, multithread=TRUE, pool = T)
+dadaRs <- dada(filtRs, err=errR, multithread=TRUE, pool = T)
+# It uses the error rates learned from the reverse reads (errR) to apply the error-correction model and infer the true biological sequences.
+
+#Inspecting the returned dada-class object:
+dadaFs[[1]]
+dadaRs[[1]]
+```
+
+### Merging paired reads and checking on read length
+
+```{r}
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
+# merges forward (F) and reveres (R) sequences and filtered data in one column
+# Inspect the merger data.frame from the first sample
+head(mergers[[1]])
+
+# Construct sequencing table
+seqtab <- makeSequenceTable(mergers)
+
+dim(seqtab)
+
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab)))
+
+# check visually how the districution of read length is
+# Get the read length distribution
+length_table <- table(nchar(getSequences(seqtab)))
+
+# Convert to data frame for plotting
+length_df <- as.data.frame(length_table)
+colnames(length_df) <- c("Length", "Count")
+
+# Make sure Length is numeric
+length_df$Length <- as.numeric(as.character(length_df$Length))
+
+ggplot(length_df, aes(x = Length, y = Count)) +
+  geom_col(fill = "steelblue") +  # vertical bars
+  labs(title = "Distribution of Read Lengths",
+       x = "Read Length (bp)",
+       y = "Number of Reads") +
+  xlim(280, 400)+
+  theme_minimal()
+
+```
+
+### Remove Chimeras
+
+```{r}
+# Remove chimeras  
+# Chimeric sequences are artifacts of the PCR amplification process. These sequences do not represent real biological sequences but rather result from errors in the molecular processes used to prepare and sequence DNA.
+# Chimeric sequences can inflate diversity estimates. Removing them ensures that the analysis focuses only on true biological sequences.
+# This code removes chimeric sequences from the sequence table, calculates the dimensions of the updated sequence table and determines the proportion of non-chimeric sequences retained.
+
+seqtab.nochim_MY <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+
+dim(seqtab.nochim_MY)
+
+## calculate the  frequency of chimeric sequences 
+sum(seqtab.nochim_MY)/sum(seqtab)
+
+
+# Track reads through the pipeline 
+# This block of code tracks the number of reads at each stage of the DADA2 pipeline for each sample. This tracking helps monitor data loss, identify problematic samples, and ensure the pipeline is functioning as expected.
+getN <- function(x) sum(getUniques(x))
+
+# custom function that calculates the total number of unique reads (amplicon sequences)
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim_MY))
+# combines data from multiple steps into a single table
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample.names
+head(track)
+
+# download table
+# before downloading remove the tail of the name
+track_adjusted <- track
+
+rownames(track_adjusted) <- rownames(track_adjusted) |>
+  sub("_S.*", "", x = _)
+
+write.xlsx(track_adjusted, file = "202404_MY_PLT_stats_mothur_overview_table.xlsx", rowNames = TRUE)
+```
+
+### Assign Taxonomy
+
+```{r}
+# Assign taxonomy
+# This block of code assigns taxonomic classifications to the non-chimeric sequences (ASVs) in your dataset, enabling the identification of the taxa represented by the sequences
+
+taxa_MY <- assignTaxonomy(seqtab.nochim_MY,"/yourpath/silva_nr_v138_train_set.fa.gz" , multithread=TRUE)
+# uses a reference database to classify each unique sequence (ASV) in the seqtab.nochim table to a taxonomic level
+# rows: correspond to unique sequences (ASV)
+
+##optional: make species level assignments based on exact matching
+taxa_MY <- addSpecies(taxa_MY, "/yourpath/silva_species_assignment_v138.fa.gz")
+                   
+#inspect the taxonomic assignments:
+taxa.print_MY <- taxa_MY # Removing sequence rownames for display only
+rownames(taxa.print_MY) <- NULL
+head(taxa.print_MY)
+```
+
+### Prepare Data for plotting
+
+```{r}
+# add needed info to data frame
+samples.out_MY <- rownames(seqtab.nochim_MY)
+info_split_MY <- strsplit(samples.out_MY, "_")
+Coral_Species <- sapply(info_split_MY, function(x) sub("[0-9]+", "", x[1]))
+Genotype <- sapply(info_split_MY, function(x) gsub("[^0-9]", "", x[1]))
+Orientation <- sapply(info_split_MY, function(x) sub("[0-9]+", "", x[2]))
+Location <- sapply(info_split_MY, function(x) gsub("[^0-9]", "", x[2]))
+samdf_MY <- data.frame(Coral_Species, Genotype, Orientation, Location, stringsAsFactors = FALSE)
+rownames(samdf_MY) <- samples.out_MY
+
+# check the amount of sampling locations
+table(samdf_MY$Location)
+
+# add the name of the Location
+samdf_MY <- samdf_MY %>%
+  mutate(
+    Location_names = case_when(
+      Location == "1" ~ "Top",
+      Location == "2" ~ "Upper Middle",
+      Location == "3" ~ "Lower Middle",
+      Location == "4" ~ "Bottom",
+      TRUE ~ NA_character_   # just in case other values exist
+    )
+  )
+
+# add column Condition to meta data
+samdf_MY$Condition <- paste(samdf_MY$Location_names, samdf_MY$Orientation, sep = "_")
+
+# save metadata
+samdf_MY_download <- samdf_MY
+
+# remove tail from sample name
+rownames(samdf_MY_download) <- rownames(samdf_MY_download) |>
+  sub("_S.*", "", x = _)
+
+# download
+write.xlsx(samdf_MY_download, file = "202404_MY_PLT_metadata.xlsx", rowNames = TRUE)
+
+
+# Prepare data - FILTERING - seqtab.nochim
+# turn matrix
+seqtab.nochim_MY_t <- t(seqtab.nochim_MY)
+
+# Filter: Keep only rows with sum > 10
+row_sums <- rowSums(seqtab.nochim_MY_t)
+
+seqtab.nochim_MY_filtered_t <- 
+  seqtab.nochim_MY_t[row_sums > 10, ]
+
+# before filtering
+nrow(seqtab.nochim_MY_t)
+# 4335
+
+# after filtering
+nrow(seqtab.nochim_MY_filtered_t)
+# 3623
+
+# turn matrix back so it was as before
+seqtab.nochim_MY_filtered <- t(seqtab.nochim_MY_filtered_t)
+# filtered seqtab table
+
+# FILTER: taxa table
+# filter taxa table based on the rows from the seqtab.nochim table
+filtered_asvs <- rownames(seqtab.nochim_MY_filtered_t)
+
+# subset the taxonomy table to keep only these ASVs
+taxa_MY_filtered <- taxa_MY[filtered_asvs, ]
+
+# filter contaminations every kingdom that is not eukaryotes
+# first check how many rows are not bacteria
+taxa_df <- as.data.frame(taxa_MY_filtered)
+
+# now filter
+# Keep only rows where Kingdom is "Bacteria" AND Family is not NA
+taxa_MY_filtered_onlybac <- taxa_df[ !is.na(taxa_df$Kingdom) &  taxa_df$Kingdom == "Bacteria", ]
+
+# after filtering
+nrow(taxa_MY_filtered_onlybac)
+# 3453
+
+# make the data frame back into a matrix
+# Convert to matrix
+taxa_MY_filtered_onlybac <- as.matrix(taxa_MY_filtered_onlybac)
+
+# now remove the rows that were removed from the taxa table also from the asv table before constructing physeq dataframe
+# what rows should be kept
+keep_ASVs <- rownames(taxa_MY_filtered_onlybac)
+
+# remove filtered rows
+seqtab.nochim_MY_filtered_onlybac_t <- seqtab.nochim_MY_filtered_t[keep_ASVs, , drop = FALSE]
+
+# after filtering
+nrow(seqtab.nochim_MY_filtered_onlybac_t)
+# 3453
+
+# turn matrix
+seqtab.nochim_MY_filtered_onlybac <- t(seqtab.nochim_MY_filtered_onlybac_t)
+
+# CONSTRUCT PHYLSEQ
+# construct a phyloseq object. with filtered seqtab.nochim and taxa data and ASV names
+ps_MY_filtered <- phyloseq(otu_table(seqtab.nochim_MY_filtered_onlybac, taxa_are_rows=FALSE), 
+               sample_data(samdf_MY), 
+               tax_table(taxa_MY_filtered_onlybac))
+
+# store DNA sequences of our ASV in the refseq slot of the phyloseq object
+dna_MY <- Biostrings::DNAStringSet(taxa_names(ps_MY_filtered))
+names(dna_MY) <- taxa_names(ps_MY_filtered)
+ps_MY_filtered <- merge_phyloseq(ps_MY_filtered, dna_MY)
+taxa_names(ps_MY_filtered) <- paste0("ASV", seq(ntaxa(ps_MY_filtered)))
+ps_MY_filtered
+
+
+# FOR DOWNLOADING
+# asv table
+asv_df_MY <- as.data.frame(otu_table(ps_MY_filtered))
+
+# turn matrix
+asv_df_MY <- t(asv_df_MY)
+
+# remove not needed sample name tail
+asv_df_MY_download <- asv_df_MY
+
+colnames(asv_df_MY_download) <- colnames(asv_df_MY_download) |>
+  sub("_S.*", "", x = _)
+
+# download taxa table with DNA sequences and with ASV names
+write.xlsx(asv_df_MY_download, file = "202404_MY_PLT_asv_table_filtered_onlybac.xlsx", rowNames = TRUE)
+
+# extract taxa table with ASV
+taxa_df_MY <- as.data.frame(tax_table(ps_MY_filtered))
+
+# download taxa table with DNA sequences and with ASV names
+write.xlsx(taxa_df_MY, file = "202404_MY_PLT_taxa_table_asv_filtered_onlybac.xlsx", rowNames = TRUE)
+
+
+# DNA seq table
+# use: seqtab.nochim_t_filtered
+# rename sample name: only the important info
+seqtab.nochim_MY_filtered_onlybac_t_download <- seqtab.nochim_MY_filtered_onlybac_t
+
+colnames(seqtab.nochim_MY_filtered_onlybac_t_download) <- colnames(seqtab.nochim_MY_filtered_onlybac_t_download) |> sub("_S.*", "", x = _)
+
+# download ASV table with DNA sequences (filtered: >10 count removed and the sampling locations in colony 2)
+write.xlsx(seqtab.nochim_MY_filtered_onlybac_t_download, file = "202404_MY_PLT_DNA_seq_filtered_onlybac_table.xlsx", rowNames = TRUE)
+
+# create fasta file
+# extract DNA sequences from phyloseq object
+asv_seqs_MY <- refseq(ps_MY_filtered)
+
+# check number of sequences
+length(asv_seqs_MY)   # should be 3453
+
+# write to FASTA file
+Biostrings::writeXStringSet(asv_seqs_MY, "202404_MY_PLT_ASV_DNAseq_filtered_onlybac.fasta")
+```
+
+### Barplot: Bacterial Family top 20
+
+```{r}
+# prepare data for plotting
+# Groups ASVs by Family level, Counts are summed up for each Family
+ps_MY_family <- tax_glom(ps_MY_filtered, taxrank = "Family")
+
+# what are the most abundant families in %
+ps_MY_family_rel <- transform_sample_counts(ps_MY_family, function(x) x / sum(x) * 100)
+
+# calculate mean abundance per family across all samples
+family_abundance_stats <- psmelt(ps_MY_family_rel) %>%
+  group_by(Family) %>%
+  summarise(
+    Mean_Abundance = round(mean(Abundance), 3),
+    Variance = round(var(Abundance), 3),
+    SD = round(sd(Abundance), 3),
+    N = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(Mean_Abundance))
+
+# view most abundant families
+head(family_abundance_stats, 10)
+
+# download table
+write.xlsx(family_abundance_stats, 
+           file = "202404_MY_PLT_family_mean_abundance.xlsx", 
+           rowNames = FALSE)
+
+# make dataframe
+df_ps_MY_family <- psmelt(ps_MY_family)
+
+# clean sample column name
+df_ps_MY_family$Sample <- sub("_S.*", "", df_ps_MY_family$Sample)
+
+# rename families that are NA as unknown
+df_ps_MY_family <- df_ps_MY_family %>%
+  mutate(Family = ifelse(is.na(Family), "Unknown", Family))
+
+# 3. Normalize abundance to relative abundance per sample
+df_ps_MY_family <- df_ps_MY_family %>%
+  group_by(Sample) %>%
+  mutate(RelAbundance = Abundance / sum(Abundance)) %>%
+  ungroup()
+
+# download taxa table with DNA sequences and with ASV names
+write.xlsx(df_ps_MY_family, file = "202404_MY_PLT_df_ps_MY_family.xlsx", rowNames = TRUE)
+
+# total number of reads
+sum(df_ps_MY_family$Abundance)
+
+# how many unique Families do we have?
+num_unique_families <- length(unique(df_ps_MY_family$Family))
+num_unique_families
+
+# top 20
+top20_families <- df_ps_MY_family %>%
+  group_by(Family) %>%
+  summarise(TotalRelAbundance = sum(RelAbundance), .groups = "drop") %>%
+  arrange(desc(TotalRelAbundance)) %>%
+  slice_head(n = 20) %>%
+  pull(Family)
+
+# Group all non-top 20 families as "Other"
+df_ps_MY_top20_family <- df_ps_MY_family %>%
+  mutate(Family = ifelse(Family %in% top20_families, as.character(Family), "Other"))
+
+# check number of top 20 families
+df_ps_MY_top20_family %>% distinct(Family) %>% count()
+# 21 (including others)
+
+unique(df_ps_MY_top20_family$Family)
+
+# PLOT
+# organize Genotype
+df_ps_MY_top20_family <- df_ps_MY_top20_family %>%
+  mutate(
+    Genotype = factor(Genotype, levels = c("1", "6", "2", "3", "5", "4")))
+
+# Orientation
+df_ps_MY_top20_family <- df_ps_MY_top20_family %>%
+  mutate(
+    Orientation = factor(Orientation, levels = c("W", "E")))
+
+# Location
+df_ps_MY_top20_family <- df_ps_MY_top20_family %>%
+  mutate(
+    Location_names = factor(Location_names, levels = c("Bottom", "Lower Middle", "Upper Middle", "Top")))
+
+
+# combine ID and MYS asign colors to overlapping and unique families
+families_combined <- c(
+  # Overlapping families
+  "Halomonadaceae",
+  "Marinobacteraceae",
+  "Chlorobiaceae",
+  "Idiomarinaceae",
+  "Alcanivoracaceae1",
+  "Alteromonadaceae",
+  "Rhodobacteraceae",
+  "Vibrionaceae",
+  "Flavobacteriaceae",
+  
+  # Families only in MY
+  "Endozoicomonadaceae",
+  "Moraxellaceae",
+  "Spirochaetaceae",
+  "Marinilabiliaceae",
+  "Hungateiclostridiaceae",
+  "Propionibacteriaceae",
+  "Desulfosarcinaceae",
+  "Desulfobacteraceae",
+  "Cyclobacteriaceae",
+  "Pseudomonadaceae",
+  "Clade_I",
+  
+  # Families only in ID
+  "Colwelliaceae",
+  "Marinomonadaceae",
+  "Peptostreptococcales-Tissierellales_fa",
+  "Marinifilaceae",
+  "Pseudoalteromonadaceae",
+  "Stappiaceae",
+  "Nitrincolaceae",
+  "Cryomorphaceae",
+  "Arcobacteraceae",
+  "Kordiimonadaceae",
+  "Sphingomonadaceae"
+)
+
+colors_combined <- c(
+  # Overlapping families — use MY colors
+  "Halomonadaceae" = "#00538A",
+  "Marinobacteraceae" = "#990000",
+  "Chlorobiaceae" = "#FF6800",
+  "Idiomarinaceae" = "#FFB300",
+  "Alcanivoracaceae1" = "#007D35",
+  "Alteromonadaceae" = "#803E75",
+  "Rhodobacteraceae" = "#A6BDD7",
+  "Vibrionaceae" = "#CC6699",
+  "Flavobacteriaceae" = "#93AA00",
+  
+  # Only in MY
+  "Endozoicomonadaceae" = "#53377A",
+  "Moraxellaceae" = "#FF0000",
+  "Spirochaetaceae" = "#FFEA00",
+  "Marinilabiliaceae" = "#CC9999",
+  "Hungateiclostridiaceae" = "#99FFFF",
+  "Propionibacteriaceae" = "#3399CC",
+  "Desulfosarcinaceae" = "#003300",
+  "Desulfobacteraceae" = "#593318",
+  "Cyclobacteriaceae" = "#66CC66",
+  "Pseudomonadaceae" = "#CC3333",
+  "Clade_I" = "#CC99FF",
+  
+  # Only in ID — pick from ID colors if available, else reuse MY
+  "Colwelliaceae" = "#006666",   # example ID color
+  "Marinomonadaceae" = "#00CC99",
+  "Peptostreptococcales-Tissierellales_fa" = "#CCCC66",
+  "Marinifilaceae" = "#996633",
+  "Pseudoalteromonadaceae" = "#FF6699",
+  "Stappiaceae" = "#99CC99",
+  "Nitrincolaceae" = "#9999FF",
+  "Cryomorphaceae" = "#FF99CC",
+  "Arcobacteraceae" = "#0099FF",
+  "Kordiimonadaceae" = "#CC00FF",
+  "Sphingomonadaceae" = "#0033FF")
+
+# map colors to families
+family_colors_combined <- setNames(colors_combined, families_combined)
+
+# add color for "Other"
+family_colors_combined["Other"] <- "grey70"
+
+# sort families alphabetically but keep Other first
+family_colors_sorted_combined <- c("Other", sort(setdiff(names(family_colors_combined), "Other")))
+
+# reorder color vector
+family_colors_combined <- family_colors_combined[family_colors_sorted_combined]
+
+# set Family as factor with Other first
+df_ps_MY_top20_family$Family <- factor(
+  df_ps_MY_top20_family$Family,
+  levels = names(family_colors_combined)  # Other first, top families after
+)
+
+
+# plot
+bacteria_family_plot_MY <- ggplot(df_ps_MY_top20_family, 
+                                  aes(x = RelAbundance, y = Location_names, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_x_continuous(
+    limits = c(0, 1),                      # ensures 0–100%
+    labels = scales::percent_format(),     # show as %
+    expand = c(0, 0)
+  ) +
+  facet_grid(Genotype ~ Orientation, scales = "free_y") +
+  scale_fill_manual(values = family_colors_combined) +
+  theme_minimal(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold", size = 13),
+    legend.position = "bottom",
+    legend.text = element_text(size = 13),
+    legend.title = element_text(size = 13),
+    axis.text = element_text(size = 13),
+    axis.title = element_text(size = 13),
+    panel.grid = element_blank(),
+    panel.border = element_blank()
+  ) +
+  guides(fill = guide_legend(ncol = 3)) +
+  labs(
+    x = "Relative Abundance",
+    y = "Sampling Location",
+    fill = "Bacterial Family"
+  )
+
+bacteria_family_plot_MY
+```
+
+## **Fig. 4 Bacterial community composition across the surface of massive Porites sp. colonies from Indonesia and Malaysia**
+
+```{r}
+# Combine bacterial community plots of ID and MY 
+final_combined_plot <- bacteria_family_plot_ID + bacteria_family_plot_MY +
+  plot_layout(ncol = 2, widths = c(1, 1)) +  # Equal widths for both plots
+  plot_annotation(
+    theme = theme(
+      plot.margin = margin(10, 10, 10, 10)
+    )
+  )
+
+final_combined_plot
+
+# figure was saved and edited in affinity designer for the manuscript
+ggsave(
+  filename = "16S_MY_ID.pdf",
+  plot = final_16S_combined_plot,
+  width = 11.7,      # A4 width in inches
+  height = 10,     # A4 height in inches
+  units = "in"
+)
+```
+
+# Supplementary Material
+
+## Supplementary Figure 1: Trial CBASS run
+
+```{r}
+# Malaysia trial run
+# Upload Malaysia trial run data: 20240417_MY_PLT_Por_CBASS_ED50_trialrun_data_T420
+input_data_path <- selectFile(
+  caption = "Select XLSX or CSV Input File")
+
+# trialrun data MY
+cbass_dataset_MY_trialrun <- read_data(input_data_path)
+
+# To specify the prefix for output files
+output_prefix <- tools::file_path_sans_ext(input_data_path)
+
+rlog::log_info(paste("Your current directory is", getwd()))
+rlog::log_info(paste("Your input filename is", basename(input_data_path)))
+rlog::log_info(paste("The output files will be written into", output_prefix))
+
+# preprocessing
+cbass_dataset_MY_trialrun <- preprocess_dataset(cbass_dataset_MY_trialrun)
+validate_cbass_dataset(cbass_dataset_MY_trialrun)
+
+# grouping properties Indonesia
+grouping_properties <- c("Condition")
+
+# PAM data Indonesia
+drm_formula <- "Pam_value ~ Temperature"
+models <- fit_drms(cbass_dataset_MY_trialrun , grouping_properties, drm_formula, is_curveid = TRUE)
+str(cbass_dataset_MY_trialrun)
+
+# PAM data 
+ed50_MY_trialrun <- get_ed50_by_grouping_property(models)
+cbass_dataset_MY_trialrun <- define_grouping_property(cbass_dataset_MY_trialrun, grouping_properties) %>%
+  mutate(GroupingProperty = paste(GroupingProperty, Genotype, sep = "_"))
+
+ed50_df_MY_trailrun <- 
+  left_join(ed50_MY_trialrun, cbass_dataset_MY_trialrun, by = "GroupingProperty") %>%
+  dplyr::select(names(ed50_MY_trialrun), Condition, Temperature, Pam_value,Genotype, all_of(grouping_properties)) %>%
+  distinct()
+
+# plot
+# Make Genotype a factor with desired color mapping
+genotype_colors <- c("1" = "blue", "2" = "darkgreen", "3" = "red")
+
+exploratory_curve_MY_trialrun <- 
+  ggplot(data = cbass_dataset_MY_trialrun,
+         aes(
+           x = Temperature,
+           y = Pam_value,
+           group = GroupingProperty,
+           color = as.factor(Genotype)
+         )) +
+  geom_smooth(
+    method = drc::drm,
+    method.args = list(fct = drc::LL.3()),
+    se = FALSE,
+    size = 0.7
+  ) +
+  geom_point(size = 1.5) +
+  scale_color_manual(values = genotype_colors, name = "Genotype") +
+  scale_x_continuous(
+    breaks = c(30, 35, 38, 42),   # step values for x-axis
+    labels = c(30, 35, 38, 42)
+  ) +
+  labs(
+    x = "Temperature [°C]",
+    y = "Photosynthetic efficiency [Fv/Fm]"
+  ) +
+  theme_classic(base_size = 14) +  # clean, classic theme
+  theme(
+    legend.position = "right",
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(color = "black"),
+    legend.title = element_text(face = "bold")
+  )
+
+# Plot
+exploratory_curve_MY_trialrun
+
+```
+
+## Supplementary Figure 2 and 3: TS2 sequences - absolute abundance
+
+```{r}
+# plot absolute abundance of ITS2 sequences
+# Indonesia
+# upload data
+its2_sequences_ID <- read.table('/yourpathname/post_med_seqs/582_20250509T135802_DBV_20250510T135051.seqs.absolute.abund_and_meta.txt', header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+# remove columns with meta data only keep sample name and ITS2 sequences
+its2_sequences_ID_filtered <- its2_sequences_ID[, -c(1, 3:39)]
+
+# remove rows with NA
+its2_sequences_ID_filtered <- its2_sequences_ID_filtered %>%
+  filter(sample_name != "" & !is.na(sample_name))
+
+# Convert to long format for ggplot
+its2_sequences_ID_filtered_long <- its2_sequences_ID_filtered %>%
+  pivot_longer(
+    cols = -sample_name,          # all columns except SampleID
+    names_to = "Sequence",
+    values_to = "AbsoluteAbundance"
+  )
+
+# make sure the order of sequences is correct (highest abundnace at the bottom of the barplot)
+seq_ID_order <- its2_sequences_ID_filtered_long %>%
+  group_by(Sequence) %>%
+  summarize(total_abundance = sum(AbsoluteAbundance, na.rm = TRUE)) %>%
+  arrange(desc(total_abundance)) %>%      # highest abundance first
+  pull(Sequence)
+
+# Set factor levels so that highest abundance is at the bottom
+its2_sequences_ID_filtered_long$Sequence <- factor(
+  its2_sequences_ID_filtered_long$Sequence,
+  levels = seq_ID_order
+)
+
+# organize data
+# Example sample vector
+its2_sequences_ID_filtered_long$sample_name <- factor(its2_sequences_ID_filtered_long$sample_name, levels = 
+            c("Por_01_Top", "Por_01_Bottom","Por_02_Top", "Por_02_Bottom", 
+             "Por_03_Top",  "Por_03_Bottom" , "Por_04_Top" , "Por_04_Bottom", "Por_06_Top","Por_06_Bottom",
+             "Por_07_Bottom", "Por_07_Top"))
+
+
+
+# set colors
+color_palette <- c(
+             "#E704C4", "#C2FFED", "#A079BF", "#CC0744", "#C0B9B2", "#C2FF99", "#001E09", "#00489C", "#6F0062",
+            "#0CBD66",
+            "#EEC3FF", "#456D75", "#B77B68", "#7A87A1", "#788D66", "#885578", "#FAD09F", "#FF8A9A", "#D157A0",
+            "#BEC459",
+            "#456648", "#0086ED", "#886F4C", "#34362D", "#B4A8BD", "#00A6AA", "#452C2C", "#636375", "#A3C8C9",
+            "#FF913F",
+            "#938A81", "#575329", "#00FECF", "#B05B6F", "#8CD0FF", "#3B9700", "#04F757", "#C8A1A1", "#1E6E00",
+            "#7900D7",
+            "#A77500", "#6367A9", "#A05837", "#6B002C", "#772600", "#D790FF", "#9B9700", "#549E79", "#FFF69F",
+            "#201625",
+            "#72418F", "#BC23FF", "#99ADC0", "#3A2465", "#922329", "#5B4534", "#FDE8DC", "#404E55", "#0089A3",
+            "#CB7E98",
+            "#A4E804", "#324E72", "#6A3A4C", "#83AB58", "#001C1E", "#D1F7CE", "#004B28", "#C8D0F6", "#A3A489",
+            "#806C66",
+            "#222800", "#BF5650", "#E83000", "#66796D", "#DA007C", "#FF1A59", "#8ADBB4", "#1E0200", "#5B4E51",
+            "#C895C5",
+            "#320033", "#FF6832", "#66E1D3", "#CFCDAC", "#D0AC94", "#7ED379", "#012C58", "#7A7BFF", "#D68E01",
+            "#353339",
+            "#78AFA1", "#FEB2C6", "#75797C", "#837393", "#943A4D", "#B5F4FF", "#D2DCD5", "#9556BD", "#6A714A",
+            "#001325",
+            "#02525F", "#0AA3F7", "#E98176", "#DBD5DD", "#5EBCD1", "#3D4F44", "#7E6405", "#02684E", "#962B75",
+            "#8D8546",
+            "#9695C5", "#E773CE", "#D86A78", "#3E89BE", "#CA834E", "#518A87", "#5B113C", "#55813B","#FFB500",
+            "#00005F",
+            "#A97399", "#4B8160", "#59738A", "#FF5DA7", "#F7C9BF", "#643127", "#513A01", "#6B94AA", "#51A058",
+            "#A45B02",
+            "#1D1702", "#E20027", "#E7AB63", "#4C6001", "#9C6966", "#64547B", "#97979E", "#006A66", "#391406",
+            "#F4D749",
+            "#0045D2", "#006C31", "#DDB6D0", "#7C6571", "#9FB2A4", "#00D891", "#15A08A", "#BC65E9", "#FFFFFE",
+            "#C6DC99",
+            "#203B3C", "#671190", "#6B3A64", "#F5E1FF", "#FFA0F2", "#CCAA35", "#374527", "#8BB400", "#797868",
+            "#C6005A",
+            "#3B000A", "#C86240", "#29607C", "#402334", "#7D5A44", "#CCB87C", "#B88183", "#AA5199", "#B5D6C3",
+            "#A38469",
+            "#9F94F0", "#A74571", "#B894A6", "#71BB8C", "#00B433", "#789EC9", "#6D80BA", "#953F00", "#5EFF03",
+            "#E4FFFC",
+            "#1BE177", "#BCB1E5", "#76912F", "#003109", "#0060CD", "#D20096", "#895563", "#29201D", "#5B3213",
+            "#A76F42",
+            "#89412E", "#1A3A2A", "#494B5A", "#A88C85", "#F4ABAA", "#A3F3AB", "#00C6C8", "#EA8B66", "#958A9F",
+            "#BDC9D2",
+            "#9FA064", "#BE4700", "#658188", "#83A485", "#453C23", "#47675D", "#3A3F00", "#061203", "#DFFB71",
+            "#868E7E",
+            "#98D058", "#6C8F7D", "#D7BFC2", "#3C3E6E", "#D83D66", "#2F5D9B", "#6C5E46", "#D25B88", "#5B656C",
+            "#00B57F",
+            "#545C46", "#866097", "#365D25", "#252F99", "#00CCFF", "#674E60", "#FC009C", "#92896B")
+
+# plot
+ID_ITS2seq <- ggplot(its2_sequences_ID_filtered_long, aes(x = sample_name, y = AbsoluteAbundance, fill = Sequence)) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE)) +
+  scale_fill_manual(values = color_palette ) +
+  labs(x = "Sample", y = "Absolute Abundance") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"   # hide legend
+  )
+# Suppl. Figure 2
+ID_ITS2seq 
+
+
+# Malaysia
+# upload data
+its2_sequences_MY <- read.table('/yourpatthname/post_med_seqs/560_20250219T125105_DBV_20250221T224139.seqs.absolute.abund_and_meta.txt', header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+# remove columns with meta data only keep sample name and ITS2 sequences
+its2_sequences_MY_filtered <- its2_sequences_MY[, -c(1, 3:39)]
+
+# remove rows with NA
+its2_sequences_MY_filtered <- its2_sequences_MY_filtered %>%
+  filter(sample_name != "" & !is.na(sample_name))
+
+# Convert to long format for ggplot
+its2_sequences_MY_filtered_long <- its2_sequences_MY_filtered %>%
+  pivot_longer(
+    cols = -sample_name,          # all columns except SampleID
+    names_to = "Sequence",
+    values_to = "AbsoluteAbundance"
+  )
+
+
+# make sure the order of sequences is correct (highest abundnace at the bottom of the barplot)
+seq_MY_order <- its2_sequences_MY_filtered_long %>%
+  group_by(Sequence) %>%
+  summarize(total_abundance = sum(AbsoluteAbundance, na.rm = TRUE)) %>%
+  arrange(desc(total_abundance)) %>%      # highest abundance first
+  pull(Sequence)
+
+# Set factor levels so that highest abundance is at the bottom
+its2_sequences_MY_filtered_long$Sequence <- factor(
+  its2_sequences_MY_filtered_long$Sequence,
+  levels = seq_MY_order
+)
+
+
+# plot
+MY_ITS2_seq <- ggplot(its2_sequences_MY_filtered_long, aes(x = sample_name, y = AbsoluteAbundance, fill = Sequence)) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE)) +
+  scale_fill_manual(values = color_palette ) +
+  labs(x = "Sample", y = "Absolute Abundance") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"   # hide legend
+  )
+
+# Suppl Fig. 3
+MY_ITS2_seq
+```
+
+## Supplementary Tables: Statistical analysis Thermal tolerance, Bacterial and Symbiodiniaceae community composition
+
+```{r}
+# Indonesia
+# checking assumptions
+# Is data normally distributed
+hist(Final_ED50_ID$ED50) # looks a little right skewed
+shapiro.test(Final_ED50_ID$ED50) # p-value: p-value = 0.6716, not signfiicant, data is normally distributed
+qqnorm(Final_ED50_ID$ED50) # chekcing QQ Plot: normal distributed, looks good! 
+# data is normally distributed
+
+# check for differences in variance between the top and bottom sampling location
+leveneTest(ED50 ~ Condition, data = Final_ED50_ID)
+# p-value = 0.7608, not significant difference in the variance of the two groups
+
+
+# Supplementary Table S3
+# Is Ed50 significantly different within colonies?
+# Used: paired t.test to take the nested design into account
+paired_ED50 <- Final_ED50_ID %>%
+  filter(Condition %in% c("Top", "Bottom")) %>%
+  select(Genotype, Condition, ED50) %>%
+  pivot_wider(names_from = Condition,
+              values_from = ED50)
+
+t.test(paired_ED50$Top,
+       paired_ED50$Bottom,
+       paired = TRUE)
+# p-value = 0.8047
+
+
+# Malaysia
+# check data distribution: normality and homogeneity
+hist(Final_ED50_MY$ED50) 
+# normallity test
+shapiro.test(Final_ED50_MY$ED50) # p-value: not signifiacnt, data normally distributed 
+# plot normallity
+qqnorm(Final_ED50_MY$ED50) # looks normally distributed
+
+# test homogeneity
+leveneTest(ED50 ~ Condition, data = Final_ED50_MY)
+# p-value:not significant use ANOVA
+
+
+# Supplementary Tabel S4
+# Repeated measures ANOVA: is ed50 significantly different within colonies?
+model_rm <- aov(ED50 ~ Condition + Error(Genotype/Condition), 
+                data = Final_ED50_MY)
+
+summary(model_rm)
+# p-value : 0.709
+
+
+# Supplementary Table S5
+# is ed50 significantly different across depth
+# Error(Genotype/Condition): Measurements are grouped by Genotype, within each Genotype, you have repeated measures across Condition
+model_rm <- aov(ED50 ~ Depth + Error(Genotype/Condition), 
+                data = Final_ED50_MY)
+
+summary(model_rm)
+# p-value : 0.163
+```
+
+```{r}
+# Bacterial community composition data 16S
+# Supplementary Table S6:
+# Indonesia
+# extract metadata
+meta_ID <- data.frame(sample_data(ps_ID_filtered))
+
+# extract ASV/OTU table
+asv_mat_ID <- as(otu_table(ps_ID_filtered), "matrix")
+
+# make sure samples are rows and ASVs are columns
+if (taxa_are_rows(ps_ID_filtered)) {
+  asv_mat_ID <- t(asv_mat_ID)
+}
+
+# make sure OTU table is numeric
+mode(asv_mat_ID) <- "numeric"
+
+# optional: check that sample names match between metadata and OTU table
+all(rownames(meta_ID) == rownames(asv_mat_ID))
+
+# reorder metadata if needed to exactly match OTU table
+meta_ID <- meta_ID[rownames(asv_mat_ID), ]
+
+meta_ID$Location <- factor(
+  meta_ID$Location,
+  levels = c("Top", "Bottom")
+)
+
+meta_ID$Location <- factor(meta_ID$Location)
+meta_ID$Genotype <- factor(meta_ID$Genotype)
+
+# square root data
+asv_mat_ID_sqrt <- sqrt(asv_mat_ID)
+
+# 4. create Bray-Curtis distance matrix
+dist_mat_ID <- vegdist(asv_mat_ID_sqrt, method = "bray")
+
+# 5. run PERMANOVA
+permanova_result <- adonis2(
+  dist_mat_ID ~ Location,
+  data = meta_ID,
+  permutations = 10000,
+  strata = meta_ID$Genotype
+)
+
+print(permanova_result)
+
+
+# Malaysia
+# extract metadata
+meta <- data.frame(sample_data(ps_MY_filtered))
+
+# extract ASV/OTU table
+asv_mat <- as(otu_table(ps_MY_filtered), "matrix")
+
+# make sure samples are rows and ASVs are columns
+if (taxa_are_rows(ps_MY_filtered)) {
+  asv_mat <- t(asv_mat)
+}
+
+# make sure OTU table is numeric
+mode(asv_mat) <- "numeric"
+
+# optional: check that sample names match between metadata and OTU table
+all(rownames(meta) == rownames(asv_mat))
+
+# reorder metadata if needed to exactly match OTU table
+meta <- meta[rownames(asv_mat), ]
+
+meta$Location_names <- factor(
+  meta$Location_names,
+  levels = c("Top", "Upper Middle", "Lower Middle", "Bottom")
+)
+
+meta$Orientation <- factor(meta$Orientation)
+meta$Genotype <- factor(meta$Genotype)
+
+# square root data
+asv_mat_sqrt <- sqrt(asv_mat)
+
+str(meta)
+# 4. create Bray-Curtis distance matrix
+dist_mat <- vegdist(asv_mat_sqrt, method = "bray")
+
+# run PERMANOVA
+permanova_result <- adonis2(
+  dist_mat ~ Condition,
+  data = meta,
+  permutations = 10000,
+  strata = meta$Genotype
+)
+
+print(permanova_result)
+
+
+
+# Symbiodiniaceae community composition data: ITS2
+
+# Supplementary Table S8
+# Indonesia
+# are its2 type profiles significantly different across colonies?
+# dataframe: its2_profile_ID wide format
+
+# Copy dataframe
+ITS2_ID <- its2_data_ID
+
+
+# Metadata: species, genotype, location
+metadata_ID <- ITS2_ID[, 1:11]
+
+# Only keep numeric ITS2 columns
+ITS2_matrix_ID <- ITS2_ID[, 12:ncol(ITS2_ID)] %>% 
+  mutate(across(everything(), as.numeric))
+
+# square root data
+ITS2_matrix_ID_sqrt <- sqrt(ITS2_matrix_ID)
+
+# Supplementary table 16
+# compute bray-curtis dissimilarity matrix
+dist_ITS2_ID <- vegdist(ITS2_matrix_ID_sqrt, method = "bray")
+
+# check distance
+dist_ITS2_ID
+
+# permanova
+ITS2_permanova <- adonis2(
+  dist_ITS2_ID ~ collection_depthrange,
+  data = metadata_ID,
+  permutations = 10000,
+  method = "bray",
+    strata = metadata_ID$collection_colony
+)
+
+print(ITS2_permanova)
+
+# Supplementary table S9
+# Copy dataframe
+ITS2_MY <- its2_data_MY
+
+
+# Metadata: species, genotype, location
+metadata_MY <- ITS2_MY[, 1:13]
+
+# add info condition
+metadata_MY <- metadata_MY %>%
+  mutate(Condition = paste(collection_depthrange, collection_orientation, sep = "_"))
+
+# Only keep numeric ITS2 columns
+ITS2_matrix_MY <- ITS2_MY[, 14:ncol(ITS2_MY)] %>% 
+  mutate(across(everything(), as.numeric))
+
+# square root data
+ITS2_matrix_MY_sqrt <- sqrt(ITS2_matrix_MY)
+
+# Supplementary table 16
+# compute bray-curtis dissimilarity matrix
+dist_ITS2_MY <- vegdist(ITS2_matrix_MY_sqrt, method = "bray")
+
+# check distance
+dist_ITS2_MY
+
+# permanova
+ITS2_permanova_MY <- adonis2(
+  dist_ITS2_MY ~ Condition,
+  data = metadata_MY,
+  permutations = 10000,
+  method = "bray",
+    strata = metadata_MY$collection_colony
+)
+
+print(ITS2_permanova_MY)
+
+```
