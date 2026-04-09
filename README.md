@@ -1,9 +1,9 @@
 # Exploring Within-Colony Thermal Tolerance Variability in Reef-Building Corals
 ## Marlen Schlotheuber, Sebastian Szereday, Lisa Schaefer, Hannah Manns, Christian R. Voolstra
 
-#### Here the R-script of the manuscript "Exploring Within-Colony Thermal Tolerance Variability in Reef Building Corals" as well as the temperature profile data of the CBASS assay can be found.
+#### Here the R-script of the manuscript "Exploring Within-Colony Thermal Tolerance Variability in Reef Building Corals" can be found.
 
-1. the R-script contains the script that was used to analyse the data and to create figures for the manuscript can be found. Figures were finalized using Affinity Designer.
+1. the R-script contains the script that was used to analyse the data and to create figures for the manuscript. Figures were finalized using Affinity Designer.
 
 ##### Additional data
 - All data required to perform the analyses and generate the results and figures in this manuscript are available in the Supplementary Data Sheet 1
