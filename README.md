@@ -8,7 +8,7 @@
 ##### Additional data
 - All data required to perform the analyses and generate the results and figures in this manuscript are available in the Supplementary Data Sheet 1
 - Raw FASTQ sequencing files of the 16S and ITS2 data are accessible at NCBI under BioProject: PRJNA1419122
-- The temperature data of the thermal assays and the pictures of the coral colonies can be found on Zenodo: XX
+- The temperature data of the thermal assays and the pictures of the coral colonies used for the thermal assays can be found on Zenodo: ADD LINK
 - The ITS2 data can be found on the SymPortal platform: for Indonesia: https://symportal.org/data_explorer/?Study=202505_hannama1_ID_SpatialCBASS and for Malaysia: https://symportal.org/data_explorer/?Study=202502_schloma1_MY_SpatialCBASS, 
 
 ##### Note
