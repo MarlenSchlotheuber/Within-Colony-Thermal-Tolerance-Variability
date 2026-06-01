@@ -1,5 +1,5 @@
 # Exploring Within-Colony Thermal Tolerance Variability in Reef-Building Corals
-## Marlen Schlotheuber, Sebastian Szereday, Lisa Schaefer, Hannah Manns, Niek Wassink, Alexandra Seifert, Mahardika Rizqi Himawan4, Kok Lynn Chew, Christian R. Voolstra
+## Marlen Schlotheuber, Sebastian Szereday, Lisa Schaefer, Hannah Manns, Niek Wassink, Alexandra Seifert, Mahardika Rizqi Himawan, Kok Lynn Chew, Christian R. Voolstra
 
 #### Here the R-script of the manuscript "Exploring Within-Colony Thermal Tolerance Variability in Reef Building Corals" can be found.
 
